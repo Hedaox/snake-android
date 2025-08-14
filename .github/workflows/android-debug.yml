@@ -1,0 +1,267 @@
+.github/workflows/android-debug.yml
+
+name: Build Snake (Debug)
+
+on: workflow_dispatch: {}
+
+jobs: build: runs-on: ubuntu-latest steps: - name: Checkout uses: actions/checkout@v4
+
+- name: Set up JDK
+    uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: '17'
+
+  - name: Set up Android SDK
+    uses: android-actions/setup-android@v3
+
+  - name: Install SDK packages
+    run: |
+      sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+  - name: Generate project files (Snake app)
+    run: |
+      set -e
+      mkdir -p app/src/main/java/com/example/snake
+      mkdir -p app/src/main/res/layout
+      mkdir -p app/src/main/res/values
+
+      cat > settings.gradle <<'EOF'
+      pluginManagement {
+        repositories {
+          gradlePluginPortal()
+          google()
+          mavenCentral()
+        }
+      }
+      dependencyResolutionManagement {
+        repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+        repositories {
+          google()
+          mavenCentral()
+        }
+      }
+      rootProject.name = "Snake"
+      include(":app")
+      EOF
+
+      cat > build.gradle <<'EOF'
+      plugins {
+        id 'com.android.application' version '8.5.0' apply false
+      }
+      EOF
+
+      cat > gradle.properties <<'EOF'
+      org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+      android.useAndroidX=true
+      android.nonTransitiveRClass=true
+      EOF
+
+      cat > app/build.gradle <<'EOF'
+      plugins {
+          id 'com.android.application'
+      }
+      android {
+          namespace 'com.example.snake'
+          compileSdk 34
+          defaultConfig {
+              applicationId "com.example.snake"
+              minSdk 21
+              targetSdk 34
+              versionCode 1
+              versionName "1.0"
+          }
+          buildTypes {
+              release {
+                  minifyEnabled false
+                  proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+              }
+          }
+      }
+      dependencies {
+          implementation 'androidx.appcompat:appcompat:1.7.0'
+      }
+      EOF
+
+      cat > app/proguard-rules.pro <<'EOF'
+      # no rules
+      EOF
+
+      cat > app/src/main/AndroidManifest.xml <<'EOF'
+      <?xml version="1.0" encoding="utf-8"?>
+      <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          package="com.example.snake">
+          <uses-permission android:name="android.permission.VIBRATE"/>
+          <application
+              android:allowBackup="true"
+              android:label="@string/app_name"
+              android:supportsRtl="true"
+              android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+              <activity
+                  android:name=".MainActivity"
+                  android:exported="true"
+                  android:screenOrientation="portrait">
+                  <intent-filter>
+                      <action android:name="android.intent.action.MAIN" />
+                      <category android:name="android.intent.category.LAUNCHER" />
+                  </intent-filter>
+              </activity>
+          </application>
+      </manifest>
+      EOF
+
+      cat > app/src/main/res/values/strings.xml <<'EOF'
+      <resources>
+          <string name="app_name">Snake</string>
+          <string name="tap_to_start">Tap to start</string>
+          <string name="paused">Paused</string>
+          <string name="game_over">Game over</string>
+          <string name="score">Score</string>
+          <string name="best">Best</string>
+      </resources>
+      EOF
+
+      cat > app/src/main/res/layout/activity_main.xml <<'EOF'
+      <?xml version="1.0" encoding="utf-8"?>
+      <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+          android:layout_width="match_parent"
+          android:layout_height="match_parent">
+          <com.example.snake.GameView
+              android:id="@+id/gameView"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent" />
+      </FrameLayout>
+      EOF
+
+      cat > app/src/main/java/com/example/snake/MainActivity.java <<'EOF'
+      package com.example.snake;
+
+      import android.os.Bundle;
+      import android.view.View;
+      import androidx.appcompat.app.AppCompatActivity;
+
+      public class MainActivity extends AppCompatActivity {
+          private GameView gameView;
+          @Override
+          protected void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+              getWindow().getDecorView().setSystemUiVisibility(
+                      View.SYSTEM_UI_FLAG_FULLSCREEN |
+                              View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                              View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+              setContentView(R.layout.activity_main);
+              gameView = findViewById(R.id.gameView);
+          }
+          @Override
+          protected void onResume() { super.onResume(); gameView.resume(); }
+          @Override
+          protected void onPause() { super.onPause(); gameView.pause(); }
+      }
+      EOF
+
+      cat > app/src/main/java/com/example/snake/GameView.java <<'EOF'
+      package com.example.snake;
+
+      import android.content.Context;
+      import android.content.SharedPreferences;
+      import android.graphics.Canvas;
+      import android.graphics.Color;
+      import android.graphics.Paint;
+      import android.graphics.Point;
+      import android.os.Build;
+      import android.os.Handler;
+      import android.os.Looper;
+      import android.os.VibrationEffect;
+      import android.os.Vibrator;
+      import android.util.AttributeSet;
+      import android.view.GestureDetector;
+      import android.view.MotionEvent;
+      import android.view.View;
+
+      import java.util.ArrayDeque;
+      import java.util.Random;
+
+      public class GameView extends View {
+          private int cellSize;  private int cols;  private int rows;
+          private final ArrayDeque<Point> snake = new ArrayDeque<>();
+          private Direction dir = Direction.RIGHT; private Direction nextDir = Direction.RIGHT;
+          private Point food = new Point(5,5); private final Random rng = new Random();
+          private final Handler handler = new Handler(Looper.getMainLooper());
+          private final int baseTickMs = 110; private boolean running=false, started=false, gameOver=false, paused=false;
+          private int score=0, best=0; private static final String PREFS="snake_prefs", KEY_BEST="best";
+          private final Paint snakePaint = new Paint(); private final Paint foodPaint = new Paint();
+          private final Paint gridPaint = new Paint(); private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+          private final GestureDetector gestures; private Vibrator vibrator;
+
+          public GameView(Context ctx){ this(ctx,null);}  public GameView(Context ctx, AttributeSet attrs){
+              super(ctx, attrs); setFocusable(true);
+              snakePaint.setColor(Color.rgb(56,142,60)); foodPaint.setColor(Color.rgb(229,57,53));
+              gridPaint.setColor(Color.argb(40,255,255,255)); gridPaint.setStrokeWidth(1f);
+              textPaint.setColor(Color.WHITE); textPaint.setTextAlign(Paint.Align.CENTER);
+              gestures=new GestureDetector(ctx,new GestureDetector.SimpleOnGestureListener(){
+                  private static final int THRESHOLD=40; @Override public boolean onDown(MotionEvent e){return true;}
+                  @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy){
+                      float dx=e2.getX()-e1.getX(), dy=e2.getY()-e1.getY();
+                      if(Math.abs(dx)>Math.abs(dy)){
+                          if(Math.abs(dx)>THRESHOLD){ if(dx>0) turn(Direction.RIGHT); else turn(Direction.LEFT); return true; }
+                      } else {
+                          if(Math.abs(dy)>THRESHOLD){ if(dy>0) turn(Direction.DOWN); else turn(Direction.UP); return true; }
+                      } return false; }
+              });
+              vibrator=(Vibrator)ctx.getSystemService(Context.VIBRATOR_SERVICE);
+              SharedPreferences sp=ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE); best=sp.getInt(KEY_BEST,0);
+              reset();
+          }
+
+          private void reset(){ snake.clear(); int sx=6, sy=6; snake.add(new Point(sx,sy)); snake.add(new Point(sx-1,sy)); snake.add(new Point(sx-2,sy));
+              dir=Direction.RIGHT; nextDir=Direction.RIGHT; score=0; gameOver=false; started=false; spawnFood(); invalidate(); }
+
+          private void spawnFood(){ if(cols<=0||rows<=0) return; while(true){ int fx=rng.nextInt(cols), fy=rng.nextInt(rows);
+                  boolean on=false; for(Point p:snake){ if(p.x==fx&&p.y==fy){on=true;break;} } if(!on){ food.set(fx,fy); return; } } }
+
+          private final Runnable tick=new Runnable(){ @Override public void run(){ if(running&&!paused){ step(); invalidate(); handler.postDelayed(this, baseTickMs);} } };
+          public void resume(){ running=true; handler.removeCallbacks(tick); handler.postDelayed(tick, baseTickMs);}  public void pause(){ running=false; handler.removeCallbacks(tick); invalidate(); }
+
+          @Override protected void onSizeChanged(int w,int h,int ow,int oh){ super.onSizeChanged(w,h,ow,oh);
+              cellSize=Math.max(24, Math.min(w,h)/20); cols=Math.max(10, w/cellSize); rows=Math.max(16, h/cellSize);
+              textPaint.setTextSize(cellSize*0.8f); spawnFood(); }
+
+          @Override protected void onDraw(Canvas c){ super.onDraw(c); c.drawColor(Color.rgb(33,33,33));
+              for(int x=0;x<=cols;x++){ float px=x*cellSize; c.drawLine(px,0,px,rows*cellSize,gridPaint);} for(int y=0;y<=rows;y++){ float py=y*cellSize; c.drawLine(0,py,cols*cellSize,py,gridPaint);} 
+              float fx=food.x*cellSize+cellSize/2f, fy=food.y*cellSize+cellSize/2f; c.drawCircle(fx,fy,cellSize*0.35f,foodPaint);
+              for(Point p:snake){ float l=p.x*cellSize+2, t=p.y*cellSize+2, r=l+cellSize-4, b=t+cellSize-4; c.drawRoundRect(l,t,r,b,12,12,snakePaint);} 
+              String hud=getContext().getString(R.string.score)+": "+score+"   "+getContext().getString(R.string.best)+": "+best; textPaint.setTextAlign(Paint.Align.LEFT); c.drawText(hud,16, textPaint.getTextSize()+16, textPaint);
+              textPaint.setTextAlign(Paint.Align.CENTER);
+              if(!started){ c.drawText(getContext().getString(R.string.tap_to_start), getWidth()/2f, getHeight()/2f - textPaint.getTextSize(), textPaint);} 
+              else if(paused){ c.drawText(getContext().getString(R.string.paused), getWidth()/2f, getHeight()/2f - textPaint.getTextSize(), textPaint);} 
+              else if(gameOver){ c.drawText(getContext().getString(R.string.game_over), getWidth()/2f, getHeight()/2f - textPaint.getTextSize(), textPaint); c.drawText(getContext().getString(R.string.tap_to_start), getWidth()/2f, getHeight()/2f + textPaint.getTextSize()*0.3f, textPaint);} }
+
+          private void step(){ if(gameOver||paused) return; dir=nextDir; Point head=snake.peekFirst(); int nx=head.x, ny=head.y; switch(dir){ case UP:ny--;break; case DOWN:ny++;break; case LEFT:nx--;break; case RIGHT:nx++;break; }
+              if(nx<0||nx>=cols||ny<0||ny>=rows){ onDie(); return; } for(Point p:snake){ if(p.x==nx&&p.y==ny){ onDie(); return; } }
+              snake.addFirst(new Point(nx,ny)); if(nx==food.x&&ny==food.y){ score+=1; if(score>best){ best=score; getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_BEST,best).apply(); }
+                  vibrate(20); spawnFood(); } else { snake.removeLast(); } }
+
+          private void onDie(){ gameOver=true; started=false; vibrate(60); pause(); }
+          private void vibrate(int ms){ if(vibrator==null) return; try{ if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O){ vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)); } else { vibrator.vibrate(ms);} } catch(Exception ignored){} }
+          private void turn(Direction d){ if(dir.isOpposite(d)) return; nextDir=d; if(!started&&!gameOver){ started=true; resume(); } }
+          @Override public boolean onTouchEvent(MotionEvent e){ if(gestures.onTouchEvent(e)) return true; if(e.getAction()==MotionEvent.ACTION_UP){ if(gameOver){ reset(); resume(); } else if(!started){ started=true; resume(); } else { paused=!paused; if(!paused&&running){ handler.removeCallbacks(tick); handler.postDelayed(tick, baseTickMs);} invalidate(); } return true; } return true; }
+          enum Direction{ UP,DOWN,LEFT,RIGHT; boolean isOpposite(Direction o){ return (this==UP&&o==DOWN)||(this==DOWN&&o==UP)||(this==LEFT&&o==RIGHT)||(this==RIGHT&&o==LEFT);} }
+      }
+      EOF
+
+  - name: Download Gradle and generate wrapper
+    run: |
+      curl -L -o gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+      unzip -q gradle.zip
+      ./gradle-8.7/bin/gradle -q wrapper --gradle-version 8.7
+      ./gradlew --version
+
+  - name: Build Debug APK
+    run: ./gradlew assembleDebug --stacktrace
+
+  - name: Upload APK artifact
+    uses: actions/upload-artifact@v4
+    with:
+      name: snake-debug-apk
+      path: app/build/outputs/apk/debug/app-debug.apk
+      if-no-files-found: error
