@@ -58,6 +58,7 @@ jobs:
 
           cat > app/build.gradle <<'EOF'
           plugins { id 'com.android.application' }
+
           android {
             namespace 'com.example.snake'
             compileSdk 34
@@ -75,16 +76,26 @@ jobs:
               }
             }
           }
-          dependencies { implementation 'androidx.appcompat:appcompat:1.7.0' }
+
+          // Prevent old Kotlin JDK7/8 artifacts from being packaged (fixes duplicate classes)
+          configurations.all {
+            exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+            exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+          }
+
+          dependencies {
+            implementation 'androidx.appcompat:appcompat:1.6.1'
+          }
           EOF
 
           cat > app/proguard-rules.pro <<'EOF'
           # no rules
           EOF
 
+          # IMPORTANT: no package attribute here (namespace comes from Gradle)
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.snake">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-permission android:name="android.permission.VIBRATE"/>
             <application android:allowBackup="true" android:label="@string/app_name"
               android:supportsRtl="true" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -172,7 +183,7 @@ jobs:
             private Point food = new Point(5,5); private final Random rng = new Random();
             private final Handler handler = new Handler(Looper.getMainLooper());
             private final int baseTickMs = 110; private boolean running=false, started=false, gameOver=false, paused=false;
-            private int score=0, best=0; private static final String PREFS=\"snake_prefs\", KEY_BEST=\"best\";
+            private int score=0, best=0; private static final String PREFS="snake_prefs", KEY_BEST="best";
             private final Paint snakePaint=new Paint(), foodPaint=new Paint(), gridPaint=new Paint(), textPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
             private final GestureDetector gestures; private Vibrator vibrator;
 
