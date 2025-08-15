@@ -75,47 +75,22 @@ jobs:
             }
           }
 
-          // Fix duplicate Kotlin stdlib classes on CI
+          # Avoid old Kotlin JDK7/8 jars that cause duplicate-class errors on CI
           configurations.all {
             exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
             exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
           }
 
-          dependencies { implementation 'androidx.appcompat:appcompat:1.6.1' }
+          dependencies {
+            implementation 'androidx.appcompat:appcompat:1.6.1'
+          }
           EOF
 
           cat > app/proguard-rules.pro <<'EOF'
-          # no rules
+          # none
           EOF
 
-          # Manifest: wire the Application + CrashActivity
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <uses-permission android:name="android.permission.VIBRATE"/>
-            <application
-              android:name=".MyApp"
-              android:allowBackup="true"
-              android:label="@string/app_name"
-              android:supportsRtl="true"
-              android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
-              <activity
-                android:name=".MainActivity"
-                android:exported="true"
-                android:screenOrientation="portrait">
-                <intent-filter>
-                  <action android:name="android.intent.action.MAIN" />
-                  <category android:name="android.intent.category.LAUNCHER" />
-                </intent-filter>
-              </activity>
-              <activity
-                android:name=".CrashActivity"
-                android:exported="false"
-                android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
-            </application>
-          </manifest>
-          EOF
-
+          # ---------- Resources (strings + dark theme) ----------
           cat > app/src/main/res/values/strings.xml <<'EOF'
           <resources>
             <string name="app_name">Snake</string>
@@ -129,10 +104,51 @@ jobs:
           </resources>
           EOF
 
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+            <!-- Simple dark AppCompat theme with a black window background -->
+            <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
+              <item name="android:windowBackground">@android:color/black</item>
+              <item name="android:colorBackground">@android:color/black</item>
+            </style>
+          </resources>
+          EOF
+
+          # ---------- Manifest ----------
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.VIBRATE"/>
+            <application
+              android:name=".MyApp"
+              android:allowBackup="true"
+              android:label="@string/app_name"
+              android:supportsRtl="true"
+              android:theme="@style/AppTheme">
+              <activity
+                android:name=".MainActivity"
+                android:exported="true"
+                android:screenOrientation="portrait">
+                <intent-filter>
+                  <action android:name="android.intent.action.MAIN" />
+                  <category android:name="android.intent.category.LAUNCHER" />
+                </intent-filter>
+              </activity>
+              <activity
+                android:name=".CrashActivity"
+                android:exported="false"
+                android:theme="@style/AppTheme"/>
+            </application>
+          </manifest>
+          EOF
+
+          # ---------- Layout ----------
           cat > app/src/main/res/layout/activity_main.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-            android:layout_width="match_parent" android:layout_height="match_parent">
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/black">
             <com.example.snake.GameView
               android:id="@+id/gameView"
               android:layout_width="match_parent"
@@ -140,26 +156,39 @@ jobs:
           </FrameLayout>
           EOF
 
+          # ---------- Java sources ----------
           cat > app/src/main/java/com/example/snake/MainActivity.java <<'EOF'
           package com.example.snake;
 
           import android.os.Bundle;
           import android.view.View;
+          import android.widget.Toast;
           import androidx.appcompat.app.AppCompatActivity;
 
           public class MainActivity extends AppCompatActivity {
             private GameView gameView;
+
             @Override protected void onCreate(Bundle savedInstanceState) {
               super.onCreate(savedInstanceState);
+              // Fullscreen
               getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_FULLSCREEN |
                 View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+
               setContentView(R.layout.activity_main);
               gameView = findViewById(R.id.gameView);
+
+              // Fallback: if layout inflation somehow fails, create the view programmatically.
+              if (gameView == null) {
+                gameView = new GameView(this);
+                setContentView(gameView);
+              }
+              Toast.makeText(this, "Snake loaded – tap to start", Toast.LENGTH_SHORT).show();
             }
-            @Override protected void onResume(){ super.onResume(); gameView.resume(); }
-            @Override protected void onPause(){ super.onPause(); gameView.pause(); }
+
+            @Override protected void onResume(){ super.onResume(); if (gameView != null) gameView.resume(); }
+            @Override protected void onPause(){ super.onPause(); if (gameView != null) gameView.pause(); }
           }
           EOF
 
@@ -198,7 +227,9 @@ jobs:
 
             public GameView(Context c){ this(c,null); }
             public GameView(Context c, AttributeSet a){
-              super(c,a); setFocusable(true);
+              super(c,a);
+              setFocusable(true);
+              setBackgroundColor(Color.BLACK); // ensure no white screen
               snakePaint.setColor(Color.rgb(56,142,60)); foodPaint.setColor(Color.rgb(229,57,53));
               gridPaint.setColor(Color.argb(40,255,255,255)); gridPaint.setStrokeWidth(1f);
               textPaint.setColor(Color.WHITE); textPaint.setTextAlign(Paint.Align.CENTER);
@@ -222,7 +253,7 @@ jobs:
             private void spawnFood(){ if(cols<=0||rows<=0) return; while(true){ int fx=rng.nextInt(cols), fy=rng.nextInt(rows);
               boolean on=false; for(Point p:snake){ if(p.x==fx&&p.y==fy){on=true;break;} } if(!on){ food.set(fx,fy); return; } } }
 
-            // Anonymous class for the tick (avoids self-reference issue)
+            // Ticker via anonymous class (safe on all API levels)
             private final Runnable tick = new Runnable() {
               @Override public void run() {
                 if (running && !paused) { step(); invalidate(); handler.postDelayed(this, baseTickMs); }
