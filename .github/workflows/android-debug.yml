@@ -88,7 +88,7 @@ jobs:
           # no rules
           EOF
 
-          # Manifest + crash reporter hook
+          # Manifest: wire the Application + CrashActivity
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -222,6 +222,7 @@ jobs:
             private void spawnFood(){ if(cols<=0||rows<=0) return; while(true){ int fx=rng.nextInt(cols), fy=rng.nextInt(rows);
               boolean on=false; for(Point p:snake){ if(p.x==fx&&p.y==fy){on=true;break;} } if(!on){ food.set(fx,fy); return; } } }
 
+            // Anonymous class for the tick (avoids self-reference issue)
             private final Runnable tick = new Runnable() {
               @Override public void run() {
                 if (running && !paused) { step(); invalidate(); handler.postDelayed(this, baseTickMs); }
@@ -297,21 +298,21 @@ jobs:
           import java.io.FileWriter;
 
           public class MyApp extends Application {
+            private Thread.UncaughtExceptionHandler previous;
             @Override public void onCreate() {
               super.onCreate();
+              previous = Thread.getDefaultUncaughtExceptionHandler();
               Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
                 try {
+                  String trace = Log.getStackTraceString(e);
                   File f = new File(getFilesDir(), "crash.txt");
-                  try (FileWriter w = new FileWriter(f, false)) {
-                    w.write(Log.getStackTraceString(e));
-                  }
+                  try (FileWriter w = new FileWriter(f, false)) { w.write(trace); }
                   Intent i = new Intent(getApplicationContext(), CrashActivity.class);
                   i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                  i.putExtra("trace", Log.getStackTraceString(e));
+                  i.putExtra("trace", trace);
                   startActivity(i);
                 } catch (Exception ignored) {}
-                android.os.Process.killProcess(android.os.Process.myPid());
-                System.exit(10);
+                if (previous != null) previous.uncaughtException(t, e); else System.exit(10);
               });
             }
           }
@@ -323,38 +324,55 @@ jobs:
           import android.content.Intent;
           import android.os.Bundle;
           import android.widget.Button;
+          import android.widget.LinearLayout;
           import android.widget.ScrollView;
           import android.widget.TextView;
           import androidx.appcompat.app.AppCompatActivity;
-          import java.io.File;
-          import java.nio.charset.StandardCharsets;
-          import java.nio.file.Files;
+          import java.io.ByteArrayOutputStream;
+          import java.io.FileInputStream;
 
           public class CrashActivity extends AppCompatActivity {
             @Override protected void onCreate(Bundle savedInstanceState) {
               super.onCreate(savedInstanceState);
-              String trace = getIntent().getStringExtra("trace");
-              if (trace == null) {
-                try {
-                  File f = new File(getFilesDir(), "crash.txt");
-                  trace = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
-                } catch (Exception ignored) { trace = "(no trace)"; }
-              }
+
+              String tr = getIntent().getStringExtra("trace");
+              if (tr == null) tr = readFileSafe("crash.txt");
+              final String traceText = (tr == null) ? "(no trace)" : tr;
+
               TextView tv = new TextView(this);
-              tv.setTextSize(12); tv.setTextIsSelectable(true); tv.setText(trace);
-              Button share = new Button(this); share.setText(getString(R.string.share));
+              tv.setTextSize(12);
+              tv.setTextIsSelectable(true);
+              tv.setText(traceText);
+
+              ScrollView sc = new ScrollView(this);
+              sc.addView(tv);
+
+              Button share = new Button(this);
+              share.setText(getString(R.string.share));
               share.setOnClickListener(v -> {
                 Intent s = new Intent(Intent.ACTION_SEND);
                 s.setType("text/plain");
-                s.putExtra(Intent.EXTRA_TEXT, trace);
+                s.putExtra(Intent.EXTRA_TEXT, traceText);
                 startActivity(Intent.createChooser(s, getString(R.string.crash_title)));
               });
-              ScrollView sc = new ScrollView(this);
-              sc.addView(tv);
-              setContentView(sc);
-              addContentView(share, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+
+              LinearLayout root = new LinearLayout(this);
+              root.setOrientation(LinearLayout.VERTICAL);
+              root.addView(sc, new LinearLayout.LayoutParams(
+                  LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+              root.addView(share, new LinearLayout.LayoutParams(
+                  LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+              setContentView(root);
               setTitle(getString(R.string.crash_title));
+            }
+
+            private String readFileSafe(String name) {
+              try (FileInputStream fis = openFileInput(name);
+                   ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] buf = new byte[4096]; int n;
+                while ((n = fis.read(buf)) != -1) out.write(buf, 0, n);
+                return out.toString("UTF-8");
+              } catch (Exception e) { return null; }
             }
           }
           EOF
