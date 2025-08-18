@@ -1,299 +1,376 @@
 name: Build Snake (Debug)
 
-on:
-  workflow_dispatch: {}
-  push:
-    branches: [ main ]
-    paths:
-      - 'app/**'
-      - 'build.gradle'
-      - 'settings.gradle'
-      - 'gradle.properties'
-      - '.github/workflows/android-debug.yml'
+on: workflow_dispatch: {} push: branches: [ main ] paths: - '.github/workflows/android-debug.yml'
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+jobs: build: runs-on: ubuntu-latest steps: - name: Checkout uses: actions/checkout@v4
 
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+- name: Set up JDK
+    uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+  - name: Set up Android SDK
+    uses: android-actions/setup-android@v3
 
-      - name: Install SDK packages
-        run: |
-          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+  - name: Install SDK packages
+    run: |
+      sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      # --- Project scaffold (keeps repo tiny; CI generates simple app) ---
-      - name: Generate project files (Snake v1.1)
-        run: |
-          set -e
-          mkdir -p app/src/main/java/com/example/snake
-          mkdir -p app/src/main/res/layout
-          mkdir -p app/src/main/res/values
+  - name: Generate project files (Snake v1.1 + crash screen)
+    run: |
+      set -e
 
-          cat > settings.gradle <<'EOF'
-          pluginManagement {
-            repositories { gradlePluginPortal(); google(); mavenCentral() }
+      mkdir -p app/src/main/java/com/example/snake
+      mkdir -p app/src/main/res/layout
+      mkdir -p app/src/main/res/values
+
+      cat > settings.gradle <<'EOF'
+      pluginManagement {
+        repositories { gradlePluginPortal(); google(); mavenCentral() }
+      }
+      dependencyResolutionManagement {
+        repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+        repositories { google(); mavenCentral() }
+      }
+      rootProject.name = "Snake"
+      include(":app")
+      EOF
+
+      cat > build.gradle <<'EOF'
+      plugins { id 'com.android.application' version '8.5.0' apply false }
+      EOF
+
+      cat > gradle.properties <<'EOF'
+      org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+      android.useAndroidX=true
+      android.nonTransitiveRClass=true
+      EOF
+
+      cat > app/build.gradle <<'EOF'
+      plugins { id 'com.android.application' }
+
+      android {
+        namespace 'com.example.snake'
+        compileSdk 34
+        defaultConfig {
+          applicationId "com.example.snake"
+          minSdk 21
+          targetSdk 34
+          versionCode 2
+          versionName "1.1"
+        }
+        buildTypes {
+          release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
           }
-          dependencyResolutionManagement {
-            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-            repositories { google(); mavenCentral() }
+        }
+      }
+
+      configurations.all {
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+      }
+
+      dependencies {
+        implementation 'androidx.appcompat:appcompat:1.6.1'
+      }
+      EOF
+
+      cat > app/proguard-rules.pro <<'EOF'
+      # no rules
+      EOF
+
+      # Manifest avec Application + CrashActivity
+      cat > app/src/main/AndroidManifest.xml <<'EOF'
+      <?xml version="1.0" encoding="utf-8"?>
+      <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+        <application
+            android:name=".MyApp"
+            android:allowBackup="true"
+            android:label="@string/app_name"
+            android:supportsRtl="true"
+            android:theme="@style/Theme.AppCompat.NoActionBar">
+
+          <activity
+              android:name=".CrashActivity"
+              android:exported="false"
+              android:excludeFromRecents="true"
+              android:taskAffinity=""
+              android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+
+          <activity
+              android:name=".MainActivity"
+              android:exported="true"
+              android:screenOrientation="portrait">
+            <intent-filter>
+              <action android:name="android.intent.action.MAIN" />
+              <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+          </activity>
+
+        </application>
+      </manifest>
+      EOF
+
+      # Layout
+      cat > app/src/main/res/layout/activity_main.xml <<'EOF'
+      <?xml version="1.0" encoding="utf-8"?>
+      <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+        <com.example.snake.GameView
+          android:id="@+id/gameView"
+          android:layout_width="match_parent"
+          android:layout_height="match_parent"/>
+      </FrameLayout>
+      EOF
+
+      # Strings
+      cat > app/src/main/res/values/strings.xml <<'EOF'
+      <resources>
+        <string name="app_name">Snake</string>
+        <string name="tap_to_start">Tap to start</string>
+        <string name="paused">Paused</string>
+        <string name="game_over">Game over</string>
+        <string name="score">Score</string>
+        <string name="best">Best</string>
+      </resources>
+      EOF
+
+      # MainActivity
+      cat > app/src/main/java/com/example/snake/MainActivity.java <<'EOF'
+      package com.example.snake;
+
+      import android.os.Bundle;
+      import android.view.View;
+      import androidx.appcompat.app.AppCompatActivity;
+
+      public class MainActivity extends AppCompatActivity {
+        private GameView gameView;
+        @Override protected void onCreate(Bundle savedInstanceState) {
+          super.onCreate(savedInstanceState);
+          getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_FULLSCREEN |
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+          setContentView(R.layout.activity_main);
+          gameView = findViewById(R.id.gameView);
+        }
+        @Override protected void onResume(){ super.onResume(); if(gameView!=null) gameView.resume(); }
+        @Override protected void onPause(){ super.onPause(); if(gameView!=null) gameView.pause(); }
+      }
+      EOF
+
+      # GameView (Runnable en classe anonyme pour compat Java)
+      cat > app/src/main/java/com/example/snake/GameView.java <<'EOF'
+      package com.example.snake;
+
+      import android.content.Context;
+      import android.content.SharedPreferences;
+      import android.graphics.Canvas;
+      import android.graphics.Color;
+      import android.graphics.Paint;
+      import android.graphics.Point;
+      import android.os.Build;
+      import android.os.Handler;
+      import android.os.Looper;
+      import android.os.VibrationEffect;
+      import android.os.Vibrator;
+      import android.util.AttributeSet;
+      import android.view.GestureDetector;
+      import android.view.MotionEvent;
+      import android.view.View;
+
+      import java.util.ArrayDeque;
+      import java.util.Random;
+
+      public class GameView extends View {
+        private int cellSize, cols, rows;
+        private final ArrayDeque<Point> snake = new ArrayDeque<>();
+        private Direction dir = Direction.RIGHT, nextDir = Direction.RIGHT;
+        private Point food = new Point(5,5); private final Random rng = new Random();
+        private final Handler handler = new Handler(Looper.getMainLooper());
+        private final int baseTickMs = 110; private boolean running=false, started=false, gameOver=false, paused=false;
+        private int score=0, best=0; private static final String PREFS="snake_prefs", KEY_BEST="best";
+        private final Paint snakePaint=new Paint(), foodPaint=new Paint(), gridPaint=new Paint(), textPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final GestureDetector gestures; private Vibrator vibrator;
+
+        public GameView(Context c){ this(c,null); }
+        public GameView(Context c, AttributeSet a){
+          super(c,a); setFocusable(true);
+          snakePaint.setColor(Color.rgb(56,142,60)); foodPaint.setColor(Color.rgb(229,57,53));
+          gridPaint.setColor(Color.argb(40,255,255,255)); gridPaint.setStrokeWidth(1f);
+          textPaint.setColor(Color.WHITE); textPaint.setTextAlign(Paint.Align.CENTER);
+          gestures=new GestureDetector(c,new GestureDetector.SimpleOnGestureListener(){
+            private static final int T=40; @Override public boolean onDown(MotionEvent e){return true;}
+            @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy){
+              float dx=e2.getX()-e1.getX(), dy=e2.getY()-e1.getY();
+              if(Math.abs(dx)>Math.abs(dy)){ if(Math.abs(dx)>T){ if(dx>0) turn(Direction.RIGHT); else turn(Direction.LEFT); return true; } }
+              else { if(Math.abs(dy)>T){ if(dy>0) turn(Direction.DOWN); else turn(Direction.UP); return true; } }
+              return false;
+            }
+          });
+          vibrator=(Vibrator)c.getSystemService(Context.VIBRATOR_SERVICE);
+          SharedPreferences sp=c.getSharedPreferences(PREFS, Context.MODE_PRIVATE); best=sp.getInt(KEY_BEST,0);
+          reset();
+        }
+
+        private void reset(){ snake.clear(); int sx=6,sy=6; snake.add(new Point(sx,sy)); snake.add(new Point(sx-1,sy)); snake.add(new Point(sx-2,sy));
+          dir=Direction.RIGHT; nextDir=Direction.RIGHT; score=0; gameOver=false; started=false; spawnFood(); invalidate(); }
+
+        private void spawnFood(){ if(cols<=0||rows<=0) return; while(true){ int fx=rng.nextInt(cols), fy=rng.nextInt(rows);
+          boolean on=false; for(Point p:snake){ if(p.x==fx&&p.y==fy){on=true;break;} } if(!on){ food.set(fx,fy); return; } } }
+
+        private final Runnable tick = new Runnable(){
+          @Override public void run(){ if(running&&!paused){ step(); invalidate(); handler.postDelayed(this, baseTickMs);} }
+        };
+        public void resume(){ running=true; handler.removeCallbacks(tick); handler.postDelayed(tick, baseTickMs); }
+        public void pause(){ running=false; handler.removeCallbacks(tick); invalidate(); }
+
+        @Override protected void onSizeChanged(int w,int h,int ow,int oh){
+          super.onSizeChanged(w,h,ow,oh);
+          cellSize=Math.max(24, Math.min(w,h)/20); cols=Math.max(10, w/cellSize); rows=Math.max(16, h/cellSize);
+          textPaint.setTextSize(cellSize*0.8f); spawnFood();
+        }
+
+        @Override protected void onDraw(Canvas c){
+          super.onDraw(c); c.drawColor(Color.rgb(33,33,33));
+          for(int x=0;x<=cols;x++){ float px=x*cellSize; c.drawLine(px,0,px,rows*cellSize,gridPaint);}
+          for(int y=0;y<=rows;y++){ float py=y*cellSize; c.drawLine(0,py,cols*cellSize,py,gridPaint);}
+          float fx=food.x*cellSize+cellSize/2f, fy=food.y*cellSize+cellSize/2f; c.drawCircle(fx,fy,cellSize*0.35f,foodPaint);
+          for(Point p:snake){ float l=p.x*cellSize+2, t=p.y*cellSize+2, r=l+cellSize-4, b=t+cellSize-4; c.drawRoundRect(l,t,r,b,12,12,snakePaint);}
+          String hud=getContext().getString(R.string.score)+": "+score+"   "+getContext().getString(R.string.best)+": "+best;
+          textPaint.setTextAlign(Paint.Align.LEFT); c.drawText(hud,16, textPaint.getTextSize()+16, textPaint);
+          textPaint.setTextAlign(Paint.Align.CENTER);
+          if(!started) c.drawText(getContext().getString(R.string.tap_to_start), getWidth()/2f, getHeight()/2f - textPaint.getTextSize(), textPaint);
+          else if(paused) c.drawText(getContext().getString(R.string.paused), getWidth()/2f, getHeight()/2f - textPaint.getTextSize(), textPaint);
+          else if(gameOver){ c.drawText(getContext().getString(R.string.game_over), getWidth()/2f, getHeight()/2f - textPaint.getTextSize(), textPaint);
+            c.drawText(getContext().getString(R.string.tap_to_start), getWidth()/2f, getHeight()/2f + textPaint.getTextSize()*0.3f, textPaint); }
+        }
+
+        private void step(){
+          if(gameOver||paused) return; dir=nextDir; Point h=snake.peekFirst(); int nx=h.x, ny=h.y;
+          switch(dir){ case UP:ny--;break; case DOWN:ny++;break; case LEFT:nx--;break; case RIGHT:nx++;break; }
+          if(nx<0||nx>=cols||ny<0||ny>=rows){ onDie(); return; }
+          for(Point p:snake){ if(p.x==nx&&p.y==ny){ onDie(); return; } }
+          snake.addFirst(new Point(nx,ny));
+          if(nx==food.x&&ny==food.y){ score++; if(score>best){ best=score; getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_BEST,best).apply(); }
+            vibrate(20); spawnFood(); } else { snake.removeLast(); }
+        }
+
+        private void onDie(){ gameOver=true; started=false; vibrate(60); pause(); }
+        private void vibrate(int ms){
+          if(vibrator==null) return;
+          try{ if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O)
+            vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
+          else vibrator.vibrate(ms);
+          }catch(Exception ignored){}
+        }
+        private void turn(Direction d){ if(dir.isOpposite(d)) return; nextDir=d; if(!started&&!gameOver){ started=true; resume(); } }
+        @Override public boolean onTouchEvent(MotionEvent e){
+          if(gestures.onTouchEvent(e)) return true;
+          if(e.getAction()==MotionEvent.ACTION_UP){
+            if(gameOver){ reset(); resume(); }
+            else if(!started){ started=true; resume(); }
+            else { paused=!paused; if(!paused&&running){ handler.removeCallbacks(tick); handler.postDelayed(tick, baseTickMs);} invalidate(); }
+            return true;
           }
-          rootProject.name = "Snake"
-          include(":app")
-          EOF
+          return true;
+        }
+        enum Direction{ UP,DOWN,LEFT,RIGHT; boolean isOpposite(Direction o){
+          return (this==UP&&o==DOWN)||(this==DOWN&&o==UP)||(this==LEFT&&o==RIGHT)||(this==RIGHT&&o==LEFT);
+        }}
+      }
+      EOF
 
-          cat > build.gradle <<'EOF'
-          plugins { id 'com.android.application' version '8.5.0' apply false }
-          EOF
+      # Application qui installe un crash handler
+      cat > app/src/main/java/com/example/snake/MyApp.java <<'EOF'
+      package com.example.snake;
 
-          cat > gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
-          android.useAndroidX=true
-          android.nonTransitiveRClass=true
-          EOF
+      import android.app.Application;
+      import android.content.Intent;
 
-          cat > app/build.gradle <<'EOF'
-          plugins { id 'com.android.application' }
+      public class MyApp extends Application {
+        @Override public void onCreate(){
+          super.onCreate();
+          Thread.setDefaultUncaughtExceptionHandler((t,e)->{
+            try{
+              Intent i=new Intent(getApplicationContext(), CrashActivity.class);
+              i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP);
+              i.putExtra("trace", stack(e));
+              startActivity(i);
+            }catch(Throwable ignored){}
+            android.os.Process.killProcess(android.os.Process.myPid());
+            System.exit(10);
+          });
+        }
+        private static String stack(Throwable e){
+          java.io.StringWriter sw=new java.io.StringWriter();
+          java.io.PrintWriter pw=new java.io.PrintWriter(sw);
+          e.printStackTrace(pw); return sw.toString();
+        }
+      }
+      EOF
 
-          android {
-            namespace 'com.example.snake'
-            compileSdk 34
-            defaultConfig {
-              applicationId "com.example.snake"
-              minSdk 21
-              targetSdk 34
-              versionCode 2
-              versionName "1.1"
-            }
-            buildTypes {
-              release {
-                minifyEnabled false
-                proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-              }
-            }
-          }
+      # CrashActivity qui affiche et copie la stacktrace
+      cat > app/src/main/java/com/example/snake/CrashActivity.java <<'EOF'
+      package com.example.snake;
 
-          // Avoid old Kotlin JDK7/8 jars that may sneak in via transitive deps
-          configurations.all {
-            exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
-            exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
-          }
+      import android.content.ClipData;
+      import android.content.ClipboardManager;
+      import android.content.Context;
+      import android.content.Intent;
+      import android.os.Bundle;
+      import android.widget.ScrollView;
+      import android.widget.TextView;
+      import android.widget.Toast;
+      import androidx.appcompat.app.AppCompatActivity;
 
-          dependencies {
-            implementation 'androidx.appcompat:appcompat:1.6.1'
-          }
-          EOF
+      import java.io.File;
+      import java.io.FileOutputStream;
 
-          cat > app/proguard-rules.pro <<'EOF'
-          # no rules
-          EOF
+      public class CrashActivity extends AppCompatActivity {
+        @Override protected void onCreate(Bundle savedInstanceState){
+          super.onCreate(savedInstanceState);
+          String trace=getIntent().getStringExtra("trace");
+          if(trace==null) trace="(no stacktrace)";
+          try{ File f=new File(getFilesDir(),"crash_latest.txt"); try(FileOutputStream out=new FileOutputStream(f)){ out.write(trace.getBytes()); } }catch(Exception ignored){}
+          TextView tv=new TextView(this); tv.setTextIsSelectable(true);
+          tv.setText("\uD83D\uDCA5 Snake a planté\n\n"+trace+"\n\n• Appui long pour copier\n• Retour pour relancer");
+          tv.setOnLongClickListener(v->{ ClipboardManager cm=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE); cm.setPrimaryClip(ClipData.newPlainText("stacktrace", trace)); Toast.makeText(this,"Stack copiée",Toast.LENGTH_SHORT).show(); return true; });
+          ScrollView root=new ScrollView(this); int pad=(int)(getResources().getDisplayMetrics().density*16); root.setPadding(pad,pad,pad,pad); root.addView(tv); setContentView(root);
+        }
+        @Override public void onBackPressed(){ Intent i=new Intent(this, MainActivity.class); i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(i); finish(); }
+      }
+      EOF
 
-          # Manifest (namespace from Gradle; do not set package attribute)
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <application
-              android:allowBackup="true"
-              android:label="@string/app_name"
-              android:supportsRtl="true"
-              android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
-              <activity android:name=".MainActivity"
-                        android:exported="true"
-                        android:screenOrientation="portrait">
-                <intent-filter>
-                  <action android:name="android.intent.action.MAIN" />
-                  <category android:name="android.intent.category.LAUNCHER" />
-                </intent-filter>
-              </activity>
-            </application>
-          </manifest>
-          EOF
+  - name: Download Gradle 8.7
+    run: |
+      curl -L -o gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+      unzip -q gradle.zip
 
-          cat > app/src/main/res/values/strings.xml <<'EOF'
-          <resources>
-            <string name="app_name">Snake</string>
-            <string name="tap_to_start">Tap to start</string>
-            <string name="paused">Paused</string>
-            <string name="game_over">Game over</string>
-            <string name="score">Score</string>
-            <string name="best">Best</string>
-          </resources>
-          EOF
+  - name: Cache Gradle
+    uses: actions/cache@v4
+    with:
+      path: |
+        ~/.gradle/caches
+        ~/.gradle/wrapper
+      key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+      restore-keys: |
+        ${{ runner.os }}-gradle-
 
-          cat > app/src/main/res/layout/activity_main.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-            android:layout_width="match_parent" android:layout_height="match_parent">
-            <com.example.snake.GameView
-              android:id="@+id/gameView"
-              android:layout_width="match_parent"
-              android:layout_height="match_parent"/>
-          </FrameLayout>
-          EOF
+  - name: Build Debug APK (using local Gradle)
+    env:
+      GRADLE_USER_HOME: ~/.gradle
+    run: ./gradle-8.7/bin/gradle --no-daemon --stacktrace assembleDebug
 
-          # MainActivity
-          cat > app/src/main/java/com/example/snake/MainActivity.java <<'EOF'
-          package com.example.snake;
-
-          import android.os.Bundle;
-          import android.view.View;
-          import androidx.appcompat.app.AppCompatActivity;
-
-          public class MainActivity extends AppCompatActivity {
-            private GameView gameView;
-            @Override protected void onCreate(Bundle savedInstanceState) {
-              super.onCreate(savedInstanceState);
-              getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_FULLSCREEN |
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-              setContentView(R.layout.activity_main);
-              gameView = findViewById(R.id.gameView);
-            }
-            @Override protected void onResume(){ super.onResume(); gameView.resume(); }
-            @Override protected void onPause(){ super.onPause(); gameView.pause(); }
-          }
-          EOF
-
-          # GameView
-          cat > app/src/main/java/com/example/snake/GameView.java <<'EOF'
-          package com.example.snake;
-
-          import android.content.Context;
-          import android.content.SharedPreferences;
-          import android.graphics.Canvas;
-          import android.graphics.Color;
-          import android.graphics.Paint;
-          import android.graphics.Point;
-          import android.os.Build;
-          import android.os.Handler;
-          import android.os.Looper;
-          import android.os.VibrationEffect;
-          import android.os.Vibrator;
-          import android.util.AttributeSet;
-          import android.view.GestureDetector;
-          import android.view.MotionEvent;
-          import android.view.View;
-
-          import java.util.ArrayDeque;
-          import java.util.Random;
-
-          public class GameView extends View {
-            private int cellSize, cols, rows;
-            private final ArrayDeque<Point> snake = new ArrayDeque<>();
-            private Direction dir = Direction.RIGHT, nextDir = Direction.RIGHT;
-            private Point food = new Point(5,5); private final Random rng = new Random();
-            private final Handler handler = new Handler(Looper.getMainLooper());
-            private final int baseTickMs = 110; private boolean running=false, started=false, gameOver=false, paused=false;
-            private int score=0, best=0; private static final String PREFS="snake_prefs", KEY_BEST="best";
-            private final Paint snakePaint=new Paint(), foodPaint=new Paint(), gridPaint=new Paint(), textPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
-            private final GestureDetector gestures; private Vibrator vibrator;
-
-            public GameView(Context c){ this(c,null); }
-            public GameView(Context c, AttributeSet a){
-              super(c,a); setFocusable(true);
-              snakePaint.setColor(Color.rgb(56,142,60)); foodPaint.setColor(Color.rgb(229,57,53));
-              gridPaint.setColor(Color.argb(40,255,255,255)); gridPaint.setStrokeWidth(1f);
-              textPaint.setColor(Color.WHITE); textPaint.setTextAlign(Paint.Align.CENTER);
-              gestures=new GestureDetector(c,new GestureDetector.SimpleOnGestureListener(){
-                private static final int T=40; @Override public boolean onDown(MotionEvent e){return true;}
-                @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy){
-                  float dx=e2.getX()-e1.getX(), dy=e2.getY()-e1.getY();
-                  if(Math.abs(dx)>Math.abs(dy)){ if(Math.abs(dx)>T){ if(dx>0) turn(Direction.RIGHT); else turn(Direction.LEFT); return true; } }
-                  else { if(Math.abs(dy)>T){ if(dy>0) turn(Direction.DOWN); else turn(Direction.UP); return true; } }
-                  return false;
-                }
-              });
-              vibrator=(Vibrator)c.getSystemService(Context.VIBRATOR_SERVICE);
-              SharedPreferences sp=c.getSharedPreferences(PREFS, Context.MODE_PRIVATE); best=sp.getInt(KEY_BEST,0);
-              reset();
-            }
-
-            private void reset(){ snake.clear(); int sx=6,sy=6; snake.add(new Point(sx,sy)); snake.add(new Point(sx-1,sy)); snake.add(new Point(sx-2,sy));
-              dir=Direction.RIGHT; nextDir=Direction.RIGHT; score=0; gameOver=false; started=false; spawnFood(); invalidate(); }
-
-            private void spawnFood(){ if(cols<=0||rows<=0) return; while(true){ int fx=rng.nextInt(cols), fy=rng.nextInt(rows);
-              boolean on=false; for(Point p:snake){ if(p.x==fx&&p.y==fy){on=true;break;} } if(!on){ food.set(fx,fy); return; } } }
-
-            private final Runnable tick = new Runnable() {
-              @Override public void run() {
-                if (running && !paused) { step(); invalidate(); handler.postDelayed(this, baseTickMs); }
-              }
-            };
-
-            public void resume(){ running=true; handler.removeCallbacks(tick); handler.postDelayed(tick, baseTickMs); }
-            public void pause(){ running=false; handler.removeCallbacks(tick); invalidate(); }
-
-            @Override protected void onSizeChanged(int w,int h,int ow,int oh){
-              super.onSizeChanged(w,h,ow,oh);
-              cellSize=Math.max(24, Math.min(w,h)/20); cols=Math.max(10, w/cellSize); rows=Math.max(16, h/cellSize);
-              textPaint.setTextSize(cellSize*0.8f); spawnFood();
-            }
-
-            @Override protected void onDraw(Canvas c){
-              super.onDraw(c); c.drawColor(Color.rgb(33,33,33));
-              for(int x=0;x<=cols;x++){ float px=x*cellSize; c.drawLine(px,0,px,rows*cellSize,gridPaint);} for(int y=0;y<=rows;y++){ float py=y*cellSize; c.drawLine(0,py,cols*cellSize,py,gridPaint);}
-              float fx=food.x*cellSize+cellSize/2f, fy=food.y*cellSize+cellSize/2f; c.drawCircle(fx,fy,cellSize*0.35f,foodPaint);
-              for(Point p:snake){ float l=p.x*cellSize+2, t=p.y*cellSize+2, r=l+cellSize-4, b=t+cellSize-4; c.drawRoundRect(l,t,r,b,12,12,snakePaint);}
-              String hud=getContext().getString(R.string.score)+": "+score+"   "+getContext().getString(R.string.best)+": "+best;
-              textPaint.setTextAlign(Paint.Align.LEFT); c.drawText(hud,16, textPaint.getTextSize()+16, textPaint);
-              textPaint.setTextAlign(Paint.Align.CENTER);
-              if(!started) c.drawText(getContext().getString(R.string.tap_to_start), getWidth()/2f, getHeight()/2f - textPaint.getTextSize(), textPaint);
-              else if(paused) c.drawText(getContext().getString(R.string.paused), getWidth()/2f, getHeight()/2f - textPaint.getTextSize(), textPaint);
-              else if(gameOver){ c.drawText(getContext().getString(R.string.game_over), getWidth()/2f, getHeight()/2f - textPaint.getTextSize(), textPaint);
-                c.drawText(getContext().getString(R.string.tap_to_start), getWidth()/2f, getHeight()/2f + textPaint.getTextSize()*0.3f, textPaint); }
-            }
-
-            private void step(){
-              if(gameOver||paused) return; dir=nextDir; Point h=snake.peekFirst(); int nx=h.x, ny=h.y;
-              switch(dir){ case UP:ny--;break; case DOWN:ny++;break; case LEFT:nx--;break; case RIGHT:nx++;break; }
-              if(nx<0||nx>=cols||ny<0||ny>=rows){ onDie(); return; }
-              for(Point p:snake){ if(p.x==nx&&p.y==ny){ onDie(); return; } }
-              snake.addFirst(new Point(nx,ny));
-              if(nx==food.x&&ny==food.y){ score++; if(score>best){ best=score; getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_BEST,best).apply(); }
-                vibrate(20); spawnFood(); } else { snake.removeLast(); }
-            }
-
-            private void onDie(){ gameOver=true; started=false; vibrate(60); pause(); }
-            private void vibrate(int ms){ if(vibrator==null) return; try{ if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)); else vibrator.vibrate(ms);}catch(Exception ignored){} }
-            private void turn(Direction d){ if(dir.isOpposite(d)) return; nextDir=d; if(!started&&!gameOver){ started=true; resume(); } }
-            @Override public boolean onTouchEvent(MotionEvent e){ if(gestures.onTouchEvent(e)) return true; if(e.getAction()==MotionEvent.ACTION_UP){ if(gameOver){ reset(); resume(); } else if(!started){ started=true; resume(); } else { paused=!paused; if(!paused&&running){ handler.removeCallbacks(tick); handler.postDelayed(tick, baseTickMs);} invalidate(); } return true; } return true; }
-            enum Direction{ UP,DOWN,LEFT,RIGHT; boolean isOpposite(Direction o){ return (this==UP&&o==DOWN)||(this==DOWN&&o==UP)||(this==LEFT&&o==RIGHT)||(this==RIGHT&&o==LEFT); }}
-          }
-          EOF
-
-      - name: Download Gradle 8.7
-        run: |
-          curl -L -o gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
-          unzip -q gradle.zip
-
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Build Debug APK (using local Gradle)
-        run: ./gradle-8.7/bin/gradle --no-daemon --stacktrace assembleDebug
-
-      - name: Upload APK artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: snake-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+  - name: Upload APK artifact
+    if: success()
+    uses: actions/upload-artifact@v4
+    with:
+      name: snake-debug-apk
+      path: app/build/outputs/apk/debug/app-debug.apk
+      if-no-files-found: error
 
