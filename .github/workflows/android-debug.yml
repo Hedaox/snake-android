@@ -5,12 +5,15 @@ on:
   push:
     branches: [ main ]
     paths:
-      - ".github/workflows/android-debug.yml"
+      - 'app/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle.properties'
+      - '.github/workflows/android-debug.yml'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,7 +22,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -28,7 +31,8 @@ jobs:
         run: |
           sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Generate project files (Snake minimal)
+      # --- Project scaffold (keeps repo tiny; CI generates simple app) ---
+      - name: Generate project files (Snake v1.1)
         run: |
           set -e
           mkdir -p app/src/main/java/com/example/snake
@@ -63,15 +67,13 @@ jobs:
           android {
             namespace 'com.example.snake'
             compileSdk 34
-
             defaultConfig {
               applicationId "com.example.snake"
               minSdk 21
               targetSdk 34
-              versionCode 1
-              versionName "1.0"
+              versionCode 2
+              versionName "1.1"
             }
-
             buildTypes {
               release {
                 minifyEnabled false
@@ -80,7 +82,7 @@ jobs:
             }
           }
 
-          // Avoid old Kotlin JDK7/8 artifacts that can cause duplicate-class issues
+          // Avoid old Kotlin JDK7/8 jars that may sneak in via transitive deps
           configurations.all {
             exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
             exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
@@ -95,20 +97,18 @@ jobs:
           # no rules
           EOF
 
-          # Manifest (no package attr; namespace is set in Gradle)
+          # Manifest (namespace from Gradle; do not set package attribute)
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <uses-permission android:name="android.permission.VIBRATE"/>
             <application
               android:allowBackup="true"
               android:label="@string/app_name"
               android:supportsRtl="true"
               android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
-              <activity
-                android:name=".MainActivity"
-                android:exported="true"
-                android:screenOrientation="portrait">
+              <activity android:name=".MainActivity"
+                        android:exported="true"
+                        android:screenOrientation="portrait">
                 <intent-filter>
                   <action android:name="android.intent.action.MAIN" />
                   <category android:name="android.intent.category.LAUNCHER" />
@@ -132,8 +132,7 @@ jobs:
           cat > app/src/main/res/layout/activity_main.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent">
+            android:layout_width="match_parent" android:layout_height="match_parent">
             <com.example.snake.GameView
               android:id="@+id/gameView"
               android:layout_width="match_parent"
@@ -141,6 +140,7 @@ jobs:
           </FrameLayout>
           EOF
 
+          # MainActivity
           cat > app/src/main/java/com/example/snake/MainActivity.java <<'EOF'
           package com.example.snake;
 
@@ -164,6 +164,7 @@ jobs:
           }
           EOF
 
+          # GameView
           cat > app/src/main/java/com/example/snake/GameView.java <<'EOF'
           package com.example.snake;
 
@@ -223,14 +224,9 @@ jobs:
             private void spawnFood(){ if(cols<=0||rows<=0) return; while(true){ int fx=rng.nextInt(cols), fy=rng.nextInt(rows);
               boolean on=false; for(Point p:snake){ if(p.x==fx&&p.y==fy){on=true;break;} } if(!on){ food.set(fx,fy); return; } } }
 
-            // Use anonymous class to avoid self-reference issue with lambda on some toolchains
             private final Runnable tick = new Runnable() {
               @Override public void run() {
-                if (running && !paused) {
-                  step();
-                  invalidate();
-                  handler.postDelayed(this, baseTickMs);
-                }
+                if (running && !paused) { step(); invalidate(); handler.postDelayed(this, baseTickMs); }
               }
             };
 
@@ -245,8 +241,7 @@ jobs:
 
             @Override protected void onDraw(Canvas c){
               super.onDraw(c); c.drawColor(Color.rgb(33,33,33));
-              for(int x=0;x<=cols;x++){ float px=x*cellSize; c.drawLine(px,0,px,rows*cellSize,gridPaint);}
-              for(int y=0;y<=rows;y++){ float py=y*cellSize; c.drawLine(0,py,cols*cellSize,py,gridPaint);}
+              for(int x=0;x<=cols;x++){ float px=x*cellSize; c.drawLine(px,0,px,rows*cellSize,gridPaint);} for(int y=0;y<=rows;y++){ float py=y*cellSize; c.drawLine(0,py,cols*cellSize,py,gridPaint);}
               float fx=food.x*cellSize+cellSize/2f, fy=food.y*cellSize+cellSize/2f; c.drawCircle(fx,fy,cellSize*0.35f,foodPaint);
               for(Point p:snake){ float l=p.x*cellSize+2, t=p.y*cellSize+2, r=l+cellSize-4, b=t+cellSize-4; c.drawRoundRect(l,t,r,b,12,12,snakePaint);}
               String hud=getContext().getString(R.string.score)+": "+score+"   "+getContext().getString(R.string.best)+": "+best;
@@ -269,27 +264,10 @@ jobs:
             }
 
             private void onDie(){ gameOver=true; started=false; vibrate(60); pause(); }
-            private void vibrate(int ms){
-              if(vibrator==null) return;
-              try{ if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O)
-                vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
-              else vibrator.vibrate(ms);
-              }catch(Exception ignored){}
-            }
+            private void vibrate(int ms){ if(vibrator==null) return; try{ if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)); else vibrator.vibrate(ms);}catch(Exception ignored){} }
             private void turn(Direction d){ if(dir.isOpposite(d)) return; nextDir=d; if(!started&&!gameOver){ started=true; resume(); } }
-            @Override public boolean onTouchEvent(MotionEvent e){
-              if(gestures.onTouchEvent(e)) return true;
-              if(e.getAction()==MotionEvent.ACTION_UP){
-                if(gameOver){ reset(); resume(); }
-                else if(!started){ started=true; resume(); }
-                else { paused=!paused; if(!paused&&running){ handler.removeCallbacks(tick); handler.postDelayed(tick, baseTickMs);} invalidate(); }
-                return true;
-              }
-              return true;
-            }
-            enum Direction{ UP,DOWN,LEFT,RIGHT; boolean isOpposite(Direction o){
-              return (this==UP&&o==DOWN)||(this==DOWN&&o==UP)||(this==LEFT&&o==RIGHT)||(this==RIGHT&&o==LEFT);
-            }}
+            @Override public boolean onTouchEvent(MotionEvent e){ if(gestures.onTouchEvent(e)) return true; if(e.getAction()==MotionEvent.ACTION_UP){ if(gameOver){ reset(); resume(); } else if(!started){ started=true; resume(); } else { paused=!paused; if(!paused&&running){ handler.removeCallbacks(tick); handler.postDelayed(tick, baseTickMs);} invalidate(); } return true; } return true; }
+            enum Direction{ UP,DOWN,LEFT,RIGHT; boolean isOpposite(Direction o){ return (this==UP&&o==DOWN)||(this==DOWN&&o==UP)||(this==LEFT&&o==RIGHT)||(this==RIGHT&&o==LEFT); }}
           }
           EOF
 
@@ -304,17 +282,18 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-8.7-${{ hashFiles('**/*.gradle*', '**/gradle.properties', '**/settings.gradle*') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: |
-            gradle-${{ runner.os }}-8.7-
+            ${{ runner.os }}-gradle-
 
       - name: Build Debug APK (using local Gradle)
         run: ./gradle-8.7/bin/gradle --no-daemon --stacktrace assembleDebug
 
       - name: Upload APK artifact
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: snake-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
